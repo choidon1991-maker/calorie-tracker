@@ -274,7 +274,7 @@
     gap: 10px;
   }
 
-  input {
+  input, select {
     width: 100%;
     font-family: var(--font-label);
     font-size: 16px;
@@ -293,10 +293,43 @@
 
   input::placeholder { color: var(--ink-faint); }
 
-  input:focus {
+  input:focus, select:focus {
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+    background-image: linear-gradient(45deg, transparent 50%, var(--accent) 50%), linear-gradient(135deg, var(--accent) 50%, transparent 50%);
+    background-position: calc(100% - 20px) center, calc(100% - 14px) center;
+    background-size: 6px 6px, 6px 6px;
+    background-repeat: no-repeat;
+    padding-right: 36px;
+  }
+
+  select:invalid, select.is-placeholder { color: var(--ink-faint); font-weight: 400; }
+
+  .checkbox-field {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--ink-soft);
+    padding: 2px 0;
+    cursor: pointer;
+  }
+
+  .checkbox-field input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    margin-top: 1px;
+    accent-color: var(--accent);
   }
 
   .add-btn {
@@ -535,6 +568,12 @@
   <form id="mealForm">
     <p class="form-title">Add a meal</p>
     <div class="field">
+      <label for="templateSelect">Quick add</label>
+      <select id="templateSelect">
+        <option value="">Choose a saved meal…</option>
+      </select>
+    </div>
+    <div class="field">
       <label for="mealName">Meal name</label>
       <input type="text" id="mealName" placeholder="Breakfast, lunch, snack…" list="mealSuggestions" autocomplete="off" required>
       <datalist id="mealSuggestions">
@@ -558,12 +597,21 @@
         <input type="number" id="mealFiber" inputmode="decimal" min="0" step="0.1" placeholder="0" required>
       </div>
     </div>
+    <label class="checkbox-field">
+      <input type="checkbox" id="saveTemplate">
+      <span>Save these numbers as a quick-add meal</span>
+    </label>
     <button type="submit" class="add-btn">Add meal</button>
   </form>
 
   <section aria-label="Meals logged today">
     <p class="list-title">Meals logged</p>
     <div class="meal-list" id="mealList"></div>
+  </section>
+
+  <section aria-label="Saved meals">
+    <p class="list-title">Saved meals</p>
+    <div class="meal-list" id="templateList"></div>
   </section>
 
   <section aria-label="Past days">
@@ -611,7 +659,23 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(meals));
   }
 
+  var TEMPLATES_KEY = "daily-log:templates";
+
+  function loadTemplates() {
+    try {
+      var raw = localStorage.getItem(TEMPLATES_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveTemplates(list) {
+    localStorage.setItem(TEMPLATES_KEY, JSON.stringify(list));
+  }
+
   var meals = loadMeals();
+  var templates = loadTemplates();
 
   var els = {
     date: document.getElementById("todayDate"),
@@ -622,11 +686,14 @@
     mealList: document.getElementById("mealList"),
     historyList: document.getElementById("historyList"),
     weeklyList: document.getElementById("weeklyList"),
+    templateList: document.getElementById("templateList"),
+    templateSelect: document.getElementById("templateSelect"),
     form: document.getElementById("mealForm"),
     name: document.getElementById("mealName"),
     calories: document.getElementById("mealCalories"),
     protein: document.getElementById("mealProtein"),
-    fiber: document.getElementById("mealFiber")
+    fiber: document.getElementById("mealFiber"),
+    saveTemplate: document.getElementById("saveTemplate")
   };
 
   els.date.textContent = new Date().toLocaleDateString(undefined, {
@@ -911,6 +978,105 @@
     });
   }
 
+  function renderTemplateSelect() {
+    var current = els.templateSelect.value;
+    els.templateSelect.innerHTML = '<option value="">Choose a saved meal…</option>';
+
+    templates
+      .slice()
+      .sort(function (a, b) { return a.name.localeCompare(b.name); })
+      .forEach(function (t) {
+        var opt = document.createElement("option");
+        opt.value = t.id;
+        opt.textContent = t.name + " (" + fmtNum(t.calories) + " cal)";
+        els.templateSelect.appendChild(opt);
+      });
+
+    els.templateSelect.value = templates.some(function (t) { return t.id === current; }) ? current : "";
+    els.templateSelect.classList.toggle("is-placeholder", !els.templateSelect.value);
+  }
+
+  function renderTemplateList() {
+    els.templateList.innerHTML = "";
+
+    if (templates.length === 0) {
+      var empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "No saved meals yet. Check “Save these numbers as a quick-add meal” when logging one to build your list.";
+      els.templateList.appendChild(empty);
+      return;
+    }
+
+    templates
+      .slice()
+      .sort(function (a, b) { return a.name.localeCompare(b.name); })
+      .forEach(function (t) {
+        var row = document.createElement("div");
+        row.className = "meal-row";
+
+        var main = document.createElement("div");
+        main.className = "meal-main";
+
+        var name = document.createElement("p");
+        name.className = "meal-name";
+        name.textContent = t.name;
+
+        var macros = document.createElement("div");
+        macros.className = "meal-macros";
+        macros.innerHTML = macrosMarkup(t);
+
+        main.appendChild(name);
+        main.appendChild(macros);
+
+        var del = document.createElement("button");
+        del.type = "button";
+        del.className = "delete-btn";
+        del.setAttribute("aria-label", "Delete saved meal " + t.name);
+        del.textContent = "×";
+        del.addEventListener("click", function () {
+          templates = templates.filter(function (x) { return x.id !== t.id; });
+          saveTemplates(templates);
+          renderTemplateSelect();
+          renderTemplateList();
+        });
+
+        row.appendChild(main);
+        row.appendChild(del);
+        els.templateList.appendChild(row);
+      });
+  }
+
+  function upsertTemplate(name, calories, protein, fiber) {
+    var existing = templates.find(function (t) { return t.name.toLowerCase() === name.toLowerCase(); });
+    if (existing) {
+      existing.calories = calories;
+      existing.protein = protein;
+      existing.fiber = fiber;
+    } else {
+      templates.push({
+        id: Date.now() + "-" + Math.random().toString(36).slice(2, 7),
+        name: name,
+        calories: calories,
+        protein: protein,
+        fiber: fiber
+      });
+    }
+    saveTemplates(templates);
+  }
+
+  els.templateSelect.addEventListener("change", function () {
+    var t = templates.find(function (x) { return x.id === els.templateSelect.value; });
+    els.templateSelect.classList.toggle("is-placeholder", !els.templateSelect.value);
+    if (!t) return;
+
+    els.name.value = t.name;
+    els.calories.value = t.calories;
+    els.protein.value = t.protein;
+    els.fiber.value = t.fiber;
+    els.templateSelect.value = "";
+    els.templateSelect.classList.add("is-placeholder");
+  });
+
   els.form.addEventListener("submit", function (e) {
     e.preventDefault();
 
@@ -930,16 +1096,26 @@
     });
 
     saveMeals(meals);
+
+    if (els.saveTemplate.checked) {
+      upsertTemplate(name, calories, protein, fiber);
+      renderTemplateSelect();
+      renderTemplateList();
+    }
+
     render();
     renderWeekly();
 
     els.form.reset();
+    els.templateSelect.classList.add("is-placeholder");
     els.name.focus();
   });
 
   render();
   renderHistory();
   renderWeekly();
+  renderTemplateSelect();
+  renderTemplateList();
 })();
 </script>
 </body>
